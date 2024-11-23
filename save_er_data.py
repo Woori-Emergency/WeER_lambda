@@ -135,13 +135,55 @@ def get_current_kst():
     now_kst = now_utc + timedelta(hours=9)  # UTC + 9 hours
     return now_kst
 
+def update_hospital_ids(hpid):
+    """hpid에 해당하는 병원의 emergency_id, icu_id, equipment_id를 업데이트하는 함수"""
+    conn = pymysql.connect(
+        host=RDS_HOST,
+        user=RDS_USER,
+        password=RDS_PASSWORD,
+        db=RDS_DB,
+        port=RDS_PORT,
+        charset="utf8mb4"
+    )
+    try:
+        with conn.cursor() as cursor:
+            # 1. emergency 테이블에서 hpid에 해당하는 emergency_id 조회
+            cursor.execute("SELECT emergency_id FROM emergency WHERE hpid = %s", (hpid,))
+            emergency_id = cursor.fetchone()
+
+            # 2. icu 테이블에서 hpid에 해당하는 icu_id 조회
+            cursor.execute("SELECT icu_id FROM icu WHERE hpid = %s", (hpid,))
+            icu_id = cursor.fetchone()
+
+            # 3. equipment 테이블에서 hpid에 해당하는 equipment_id 조회
+            cursor.execute("SELECT equipment_id FROM equipment WHERE hpid = %s", (hpid,))
+            equipment_id = cursor.fetchone()
+
+            if emergency_id and icu_id and equipment_id:
+                # 4. hospital 테이블에서 hpid에 해당하는 병원의 emergency_id, icu_id, equipment_id 업데이트
+                cursor.execute("""
+                    UPDATE hospital
+                    SET emergency_id = %s, icu_id = %s, equipment_id = %s
+                    WHERE hpid = %s
+                """, (emergency_id[0], icu_id[0], equipment_id[0], hpid))
+                conn.commit()
+                print(f"[INFO] hospital의 emergency_id, icu_id, equipment_id가 업데이트되었습니다. hpid: {hpid}")
+            else:
+                print(f"[ERROR] hpid {hpid}에 해당하는 emergency_id, icu_id, equipment_id를 찾을 수 없습니다.")
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR] 병원 ID 업데이트 중 오류 발생: {e}")
+        raise
+    finally:
+        conn.close()
+
 def lambda_realtime():
     stage1 = "서울특별시"
     for district in DISTRICTS:
         try:
             xml_response = fetch_api_data(stage1, district)
-            
-            # Equipment Data
+
+            # Equipment Data 처리
             equipment_data = parse_xml_to_dict(
                 xml_response,
                 fields=["hpid", "hvs30", "hvs31", "hvs32", "hvs33", "hvs34", "hvs35", "hvs37", "hvs27", "hvs28", "hvs29"],
@@ -149,19 +191,24 @@ def lambda_realtime():
             )
             upsert_data(equipment_data, "equipment", ["hpid", "hvventiayn", "hvventisoayn", "hvincuayn", "hvcrrtayn", "hvecmoayn", "hvhypoayn", "hvoxyayn", "hvctayn", "hvmriayn", "hvangioayn", "hvs30", "hvs31", "hvs32", "hvs33", "hvs34", "hvs35", "hvs37", "hvs27", "hvs28", "hvs29"])
 
-            # ICU Data
+            # ICU Data 처리
             icu_data = parse_xml_to_dict(
                 xml_response,
                 fields=["hpid", "hvcc", "hvncc", "hvccc", "hvicc", "hv2", "hv3", "hv6", "hv8", "hv9", "hv32", "hv34", "hv35", "hvs11", "hvs08", "hvs16", "hvs17", "hvs06", "hvs07", "hvs12", "hvs13", "hvs14", "hvs09", "hvs15", "hvs18"]
             )
             upsert_data(icu_data, "icu", ["hpid", "hvcc", "hvncc", "hvccc", "hvicc", "hv2", "hv3", "hv6", "hv8", "hv9", "hv32", "hv34", "hv35", "hvs11", "hvs08", "hvs16", "hvs17", "hvs06", "hvs07", "hvs12", "hvs13", "hvs14", "hvs09", "hvs15", "hvs18"])
 
-            # Emergency Data
+            # Emergency Data 처리
             emergency_data = parse_xml_to_dict(
                 xml_response,
                 fields=["hpid", "hvec", "hv27", "hv29", "hv30", "hv28", "hv15", "hv16", "hvs01", "hvs59", "hvs03", "hvs04", "hvs02", "hvs48", "hvs49"]
             )
             upsert_data(emergency_data, "emergency", ["hpid", "hvec", "hv27", "hv29", "hv30", "hv28", "hv15", "hv16", "hvs01", "hvs59", "hvs03", "hvs04", "hvs02", "hvs48", "hvs49"])
+
+            # 병원 데이터 처리 (hpid로 병원 조회 후, emergency_id, icu_id, equipment_id 업데이트)
+            for emergency in emergency_data:
+                hpid = emergency['hpid']
+                update_hospital_ids(hpid)
 
         except Exception as e:
             print(f"Error occurred for district {district}: {e}")
@@ -315,4 +362,3 @@ def lambda_handler(event=None, context=None):
         "statusCode": 200,
         "body": "Data fetched and stored successfully for all districts"
     }
-
