@@ -214,6 +214,7 @@ def lambda_realtime():
             print(f"Error occurred for district {district}: {e}")
 
 
+
 ####### 공지사항 #######
 
 def fetch_announce_data(stage1, stage2, pageNo=1, numOfRows=10):
@@ -351,6 +352,10 @@ def lambda_announcement():
 
 
 def lambda_handler(event=None, context=None):
+    if event.get("keep_warm"):
+        print("Keep Warm event triggered.")
+        return {"statusCode": 200, "body": "Lambda is kept warm."}
+
     start_time = time.time()
 
     lambda_realtime() #장비, 응급실, 중환자실 
